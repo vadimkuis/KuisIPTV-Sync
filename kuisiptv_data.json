@@ -72,6 +72,18 @@
       "logo": "https://iptvx.one/picons/domashny.png",
       "url": "https://zabava-htlive.cdn.ngenix.net/hls/CH_DOMASHNIY/variant.m3u8",
       "status": "online"
+    },
+    {
+      "name": "Китай ТВ HD",
+      "logo": "https://iptvx.one/picons/rus-hualiang-tv.png",
+      "url": "https://cdn.nexttvnet.ru/hlsl/provide/61394/ChinaTV2/china-tv_1920x1080/index.m3u8",
+      "status": "online"
+    },
+    {
+      "name": "СТС",
+      "logo": "https://iptvx.one/picons/sts.png",
+      "url": "https://zabava-htlive.cdn.ngenix.net/hls/CH_STS/variant.m3u8",
+      "status": "online"
     }
   ],
   "playerEngine": "hlsjs"
