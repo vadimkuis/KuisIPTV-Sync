@@ -327,9 +327,9 @@
             playerEngine: localStorage.getItem('playerEngine') || 'hlsjs',
             showAdult: false,
             github: {
-                token: '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',
-                owner: 'vadimkuis',
-                repo: 'KuisIPTV-Sync',
+                token: '',
+                owner: '',
+                repo: '',
                 path: 'kuisiptv_data.json',
                 sha: ''
             }
@@ -759,14 +759,24 @@
                 state.hiddenCategories = p.hiddenCategories || [];
                 state.viewMode = p.viewMode || 'grid';
                 state.showAdult = p.showAdult || false;
+                if (p.github) state.github = { ...state.github, ...p.github };
             }
         }
 
         function saveData() {
             localStorage.setItem('iptv_state_v3', JSON.stringify({
-                playlists: state.playlists, favorites: state.favorites,
-                customChannels: state.customChannels, hiddenCategories: state.hiddenCategories,
-                viewMode: state.viewMode, showAdult: state.showAdult
+                playlists: state.playlists, 
+                favorites: state.favorites,
+                customChannels: state.customChannels, 
+                hiddenCategories: state.hiddenCategories,
+                viewMode: state.viewMode, 
+                showAdult: state.showAdult,
+                github: {
+                    token: state.github.token,
+                    owner: state.github.owner,
+                    repo: state.github.repo,
+                    path: state.github.path
+                }
             }));
             updateGitHubRepo();
         }
@@ -776,7 +786,6 @@
             try {
                 const url = `https://api.github.com/repos/${state.github.owner}/${state.github.repo}/contents/${state.github.path}`;
                 
-                // Get current SHA
                 const getRes = await fetch(url, { 
                     headers: { 'Authorization': `token ${state.github.token}` },
                     cache: 'no-store'
@@ -796,9 +805,11 @@
                     showAdult: state.showAdult
                 };
 
-                const content = btoa(unescape(encodeURIComponent(JSON.stringify(dataToSave))));
+                const jsonStr = JSON.stringify(dataToSave);
+                const utf8Bytes = new TextEncoder().encode(jsonStr);
+                const base64Content = btoa(String.fromCharCode(...utf8Bytes));
                 
-                await fetch(url, {
+                const res = await fetch(url, {
                     method: 'PUT',
                     headers: { 
                         'Authorization': `token ${state.github.token}`, 
@@ -806,13 +817,20 @@
                     },
                     body: JSON.stringify({ 
                         message: 'KuisIPTV Sync Update', 
-                        content: content, 
+                        content: base64Content, 
                         sha: currentSha || undefined 
                     })
                 });
-                console.log('GitHub Sync: Success');
+                
+                if (res.ok) {
+                    updateGitHubStatus(true);
+                    console.log('GitHub Sync: Success');
+                } else {
+                    updateGitHubStatus(false);
+                }
             } catch (e) {
                 console.error('GitHub Sync: Failed', e);
+                updateGitHubStatus(false);
             }
         }
 
@@ -827,7 +845,10 @@
                 
                 if (res.ok) {
                     const d = await res.json();
-                    const decodedData = JSON.parse(decodeURIComponent(escape(atob(d.content))));
+                    const binaryStr = atob(d.content);
+                    const bytes = new Uint8Array(binaryStr.length);
+                    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+                    const decodedData = JSON.parse(new TextDecoder().decode(bytes));
                     
                     state.playlists = decodedData.playlists || [];
                     state.favorites = decodedData.favorites || [];
@@ -837,29 +858,44 @@
                     
                     renderFavorites(); 
                     renderPlaylists();
+                    updateGitHubStatus(true);
                     
                     if (state.currentPlaylistIndex === 'custom') {
                         loadPlaylist('custom');
                     }
                     console.log('GitHub Load: Success');
+                } else {
+                    updateGitHubStatus(false);
                 }
             } catch (e) {
                 console.error('GitHub Load: Failed', e);
+                updateGitHubStatus(false);
             }
         }
 
-        function updateGitHubStatus() {
+        function updateGitHubStatus(isOk = null) {
             const dot = document.getElementById('githubStatus');
             const label = document.getElementById('storageLabel');
-            if (state.github.token && state.github.owner && state.github.repo) { 
-                dot.classList.remove('hidden'); 
-                dot.classList.replace('bg-red-500', 'bg-green-500');
-                label.innerText = 'Облако: ' + state.github.owner; 
+            const hasConfig = state.github.token && state.github.owner && state.github.repo;
+            
+            dot.classList.remove('hidden');
+            dot.classList.remove('bg-green-500', 'bg-red-500', 'bg-orange-500');
+
+            if (!hasConfig) {
+                dot.classList.add('bg-red-500');
+                label.innerText = 'Локально (без облака)';
+                return;
             }
-            else { 
-                dot.classList.remove('hidden'); 
-                dot.classList.replace('bg-green-500', 'bg-red-500');
-                label.innerText = 'Локально'; 
+
+            if (isOk === true) {
+                dot.classList.add('bg-green-500');
+                label.innerText = 'Облако: ' + state.github.owner;
+            } else if (isOk === false) {
+                dot.classList.add('bg-red-500');
+                label.innerText = 'Ошибка подключения';
+            } else {
+                dot.classList.add('bg-orange-500');
+                label.innerText = 'Подключение...';
             }
         }
 
