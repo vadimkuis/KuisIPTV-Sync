@@ -34,6 +34,11 @@
       "name": "Советские мультики",
       "url": "https://m3u.su/mult",
       "id": 1766916563267
+    },
+    {
+      "name": "VokkaPlaylist",
+      "url": "https://m3u.su/vp",
+      "id": 1766916624524
     }
   ],
   "favorites": [],
