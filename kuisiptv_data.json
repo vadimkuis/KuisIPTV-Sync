@@ -24,6 +24,11 @@
       "name": "[loganet] movie",
       "url": "https://m3u.su/lgo",
       "id": 1766916498191
+    },
+    {
+      "name": "[iptv-org] Российские (ru_smotrim)",
+      "url": "https://m3u.su/rusm",
+      "id": 1766916534309
     }
   ],
   "favorites": [],
