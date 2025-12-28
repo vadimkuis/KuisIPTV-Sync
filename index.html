@@ -327,7 +327,7 @@
             playerEngine: localStorage.getItem('playerEngine') || 'hlsjs',
             showAdult: false,
             github: {
-                token: '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',
+                token: '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',
                 owner: 'vadimkuis',
                 repo: 'KuisIPTV-Sync',
                 path: 'kuisiptv_data.json',
@@ -400,9 +400,9 @@
 
         async function loadPlaylist(index) {
             state.currentPlaylistIndex = index;
-            state.activeCategory = 'Все'; // Сбрасываем категорию при смене плейлиста
+            state.activeCategory = 'Все'; 
             
-            let playlist = index === 'custom' ? { name: 'Мои каналы', url: 'Локально' } : state.playlists[index];
+            let playlist = index === 'custom' ? { name: 'Мои каналы', url: 'Персональный список' } : state.playlists[index];
             
             document.getElementById('currentPlaylistTitle').innerText = playlist.name;
             document.getElementById('channelsGrid').innerHTML = '<div class="col-span-full py-10 text-center animate-pulse">Загрузка...</div>';
@@ -410,21 +410,23 @@
             try {
                 let channels = [];
                 if (index === 'custom') {
-                    channels = [...state.customChannels]; // Копируем массив
+                    channels = [...state.customChannels];
                     state.categories = ['Все'];
+                    state.channels = channels;
+                    renderCategories();
+                    renderChannels();
                 } else {
                     const res = await fetch(playlist.url);
                     const data = await res.text();
                     channels = parseM3U(data);
+                    state.channels = channels;
+                    renderCategories();
+                    renderChannels();
+                    validateChannels();
                 }
-                
-                state.channels = channels;
-                renderCategories();
-                renderChannels();
-                if (index !== 'custom') validateChannels();
             } catch (e) {
                 console.error(e);
-                alert('Ошибка загрузки плейлиста');
+                document.getElementById('channelsGrid').innerHTML = `<div class="col-span-full py-20 text-center text-red-500">Ошибка загрузки. Проверьте URL плейлиста.</div>`;
             }
         }
 
@@ -478,8 +480,8 @@
             const isCustom = state.currentPlaylistIndex === 'custom';
             const adultKeywords = ['18+', 'adult', 'xxx', 'эротика', 'porn', 'эро'];
             
-            const filtered = state.channels.filter(ch => {
-                // Фильтр логотипов (только для внешних плейлистов)
+            const filtered = (isCustom ? state.customChannels : state.channels).filter(ch => {
+                // Если мы НЕ в своих каналах, скрываем те, у которых нет логотипа
                 if (!isCustom && !ch.logo) return false;
                 
                 // Фильтр 18+
@@ -490,10 +492,10 @@
                 if (isAdult && !state.showAdult) return false;
 
                 const matchesSearch = (ch.name || '').toLowerCase().includes(search);
-                const matchesCat = state.activeCategory === 'Все' || ch.category === state.activeCategory;
+                const matchesCat = isCustom || state.activeCategory === 'Все' || ch.category === state.activeCategory;
                 const notHidden = isCustom || !state.hiddenCategories.includes(ch.category);
                 
-                // В своих каналах показываем всё, во внешних - только онлайн
+                // Во внешних плейлистах скрываем оффлайн
                 const statusOk = isCustom || ch.status !== 'offline';
                 
                 return matchesSearch && matchesCat && notHidden && statusOk;
@@ -502,7 +504,7 @@
             if (filtered.length === 0) {
                 grid.innerHTML = `<div class="col-span-full py-20 text-center opacity-50">
                     <i class="fas ${isCustom ? 'fa-plus-circle' : 'fa-search'} text-4xl mb-4 block"></i>
-                    <p>${isCustom ? 'В этом списке пока нет каналов.<br>Добавьте их кнопкой "+" на карточках каналов.' : 'Ничего не найдено'}</p>
+                    <p>${isCustom ? 'В этом списке пока нет каналов.<br>Добавьте их из других плейлистов или вручную.' : 'Ничего не найдено'}</p>
                 </div>`;
                 return;
             }
@@ -512,7 +514,6 @@
                 card.tabIndex = 0;
                 card.className = `channel-card glass p-2 rounded-xl cursor-pointer flex flex-col gap-2 items-center text-center relative ${state.currentChannelIndex === idx ? 'active-channel' : ''}`;
                 
-                // Генерируем красивую заглушку, если нет логотипа
                 const logo = ch.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(ch.name)}&background=1e293b&color=3b82f6&size=128&bold=true`;
                 
                 card.onclick = () => playChannel(ch, idx);
@@ -520,15 +521,15 @@
                     <div class="w-full aspect-video rounded-lg bg-slate-900 overflow-hidden flex items-center justify-center relative">
                         <img src="${logo}" class="w-full h-full object-contain p-2" onerror="this.src='https://placehold.co/100x100/1e293b/3b82f6?text=TV'">
                         <div class="absolute bottom-1 right-1">
-                            <span class="status-dot ${ch.status === 'online' ? 'status-online' : 'status-offline'}"></span>
+                            <span class="status-dot ${ch.status === 'online' || isCustom ? 'status-online' : 'status-offline'}"></span>
                         </div>
                     </div>
                     <div class="w-full text-left px-1">
-                        <p class="text-[9px] text-blue-400 uppercase font-black truncate">${ch.category}</p>
+                        <p class="text-[9px] text-blue-400 uppercase font-black truncate">${ch.category || 'Общие'}</p>
                         <h4 class="text-[11px] font-bold truncate w-full leading-tight text-slate-200">${ch.name}</h4>
                     </div>
                     <div class="absolute top-1 right-1 flex gap-1">
-                        ${state.currentPlaylistIndex === 'custom' ? `
+                        ${isCustom ? `
                             <button onclick="deleteCustomChannel(event, '${ch.url}')" class="w-7 h-7 bg-red-600/80 backdrop-blur-md rounded-full flex items-center justify-center text-xs transition-transform active:scale-125 text-white">
                                 <i class="fas fa-trash"></i>
                             </button>
@@ -640,12 +641,11 @@
         function saveToCustom(e, ch) {
             e.stopPropagation();
             if (!state.customChannels.some(c => c.url === ch.url)) {
-                // Создаем чистую копию объекта канала
                 const newChannel = {
                     name: ch.name,
                     url: ch.url,
                     logo: ch.logo || '',
-                    category: 'Сохраненные',
+                    category: ch.category || 'Сохраненные',
                     status: 'online'
                 };
                 
@@ -653,15 +653,13 @@
                 saveData();
                 renderPlaylists();
                 
-                // Если мы уже в разделе Мои каналы, обновляем список сразу
                 if (state.currentPlaylistIndex === 'custom') {
-                    state.channels = [...state.customChannels];
                     renderChannels();
                 }
 
                 const toast = document.createElement('div');
-                toast.className = "fixed bottom-10 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-6 py-2 rounded-full shadow-2xl z-[1000]";
-                toast.innerText = "Добавлено в Мои каналы";
+                toast.className = "fixed bottom-10 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-6 py-2 rounded-full shadow-2xl z-[1000] animate-bounce";
+                toast.innerText = "Канал сохранен!";
                 document.body.appendChild(toast);
                 setTimeout(() => toast.remove(), 2000);
             }
@@ -774,43 +772,80 @@
         }
 
         async function updateGitHubRepo() {
-            if (!state.github.token) return;
+            if (!state.github.token || !state.github.owner || !state.github.repo) return;
             try {
                 const url = `https://api.github.com/repos/${state.github.owner}/${state.github.repo}/contents/${state.github.path}`;
-                const getRes = await fetch(url, { headers: { 'Authorization': `token ${state.github.token}` } });
-                if (getRes.ok) { const d = await getRes.json(); state.github.sha = d.sha; }
-                const content = btoa(unescape(encodeURIComponent(JSON.stringify({
-                    playlists: state.playlists, favorites: state.favorites,
-                    customChannels: state.customChannels
-                }))));
+                
+                // Get current SHA
+                const getRes = await fetch(url, { 
+                    headers: { 'Authorization': `token ${state.github.token}` },
+                    cache: 'no-store'
+                });
+                
+                let currentSha = null;
+                if (getRes.ok) {
+                    const d = await getRes.json();
+                    currentSha = d.sha;
+                }
+
+                const dataToSave = {
+                    playlists: state.playlists,
+                    favorites: state.favorites,
+                    customChannels: state.customChannels,
+                    hiddenCategories: state.hiddenCategories,
+                    showAdult: state.showAdult
+                };
+
+                const content = btoa(unescape(encodeURIComponent(JSON.stringify(dataToSave))));
+                
                 await fetch(url, {
                     method: 'PUT',
-                    headers: { 'Authorization': `token ${state.github.token}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: 'Update', content, sha: state.github.sha || undefined })
+                    headers: { 
+                        'Authorization': `token ${state.github.token}`, 
+                        'Content-Type': 'application/json' 
+                    },
+                    body: JSON.stringify({ 
+                        message: 'KuisIPTV Sync Update', 
+                        content: content, 
+                        sha: currentSha || undefined 
+                    })
                 });
-            } catch (e) {}
+                console.log('GitHub Sync: Success');
+            } catch (e) {
+                console.error('GitHub Sync: Failed', e);
+            }
         }
 
         async function syncFromGitHub() {
-            if (!state.github.token) return;
+            if (!state.github.token || !state.github.owner || !state.github.repo) return;
             try {
                 const url = `https://api.github.com/repos/${state.github.owner}/${state.github.repo}/contents/${state.github.path}`;
-                const res = await fetch(url, { headers: { 'Authorization': `token ${state.github.token}` } });
+                const res = await fetch(url, { 
+                    headers: { 'Authorization': `token ${state.github.token}` },
+                    cache: 'no-store'
+                });
+                
                 if (res.ok) {
                     const d = await res.json();
-                    const c = JSON.parse(decodeURIComponent(escape(atob(d.content))));
-                    state.playlists = c.playlists || [];
-                    state.favorites = c.favorites || [];
-                    state.customChannels = c.customChannels || [];
-                    renderFavorites(); renderPlaylists();
+                    const decodedData = JSON.parse(decodeURIComponent(escape(atob(d.content))));
                     
-                    // Если открыт раздел Мои каналы, обновляем сетку
+                    state.playlists = decodedData.playlists || [];
+                    state.favorites = decodedData.favorites || [];
+                    state.customChannels = decodedData.customChannels || [];
+                    state.hiddenCategories = decodedData.hiddenCategories || [];
+                    state.showAdult = decodedData.showAdult || false;
+                    
+                    renderFavorites(); 
+                    renderPlaylists();
+                    
                     if (state.currentPlaylistIndex === 'custom') {
-                        state.channels = [...state.customChannels];
-                        renderChannels();
+                        loadPlaylist('custom');
                     }
+                    console.log('GitHub Load: Success');
                 }
-            } catch (e) {}
+            } catch (e) {
+                console.error('GitHub Load: Failed', e);
+            }
         }
 
         function updateGitHubStatus() {
