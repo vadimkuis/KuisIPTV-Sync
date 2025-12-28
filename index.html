@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KuisIPTV Player</title>
+    <meta name="theme-color" content="#0f172a">
+    <link rel="manifest" href="manifest.json">
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
+    <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root { --accent: #3b82f6; }
+        body { background-color: #0f172a; color: #f8fafc; overflow: hidden; }
+        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1); }
+        
+        /* TV Overlay Animation */
+        #tvOverlay {
+            transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            transform: translateY(20px);
+            opacity: 0;
+            pointer-events: none;
+        }
+        #tvOverlay.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .view-list .channel-card {
+            flex-direction: row;
+            height: 60px;
+            text-align: left;
+            padding: 8px 15px;
+        }
+        .view-list .channel-card img { width: 40px; height: 40px; }
+        .view-list .channel-card .aspect-video { width: 50px; height: 40px; flex-shrink: 0; }
+        .view-list #channelsGrid { grid-template-columns: 1fr !important; }
+
+        #miniEPG { height: 4px; background: rgba(255,255,255,0.1); width: 100%; position: relative; overflow: hidden; }
+        #epgProgress { height: 100%; background: var(--accent); width: 45%; transition: width 1s linear; }
+
+        .sticky-player {
+            position: fixed !important;
+            bottom: 20px;
+            right: 20px;
+            width: 320px !important;
+            height: 180px !important;
+            z-index: 1000;
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5);
+            border: 2px solid var(--accent);
+            border-radius: 12px;
+        }
+        
+        .channel-card:focus-within, .channel-card:focus, .channel-card.focused, 
+        button:focus, input:focus, select:focus { 
+            outline: 4px solid #3b82f6 !important; 
+            outline-offset: 2px;
+            background: rgba(59, 130, 246, 0.2);
+            box-shadow: 0 0 25px rgba(59, 130, 246, 0.6);
+            transition: all 0.2s ease;
+        }
+        
+        .channel-card:focus-within { transform: scale(1.05); z-index: 10; }
+        .channel-card:hover { transform: translateY(-2px); transition: all 0.2s; }
+        .active-channel { border-color: var(--accent); background: rgba(59, 130, 246, 0.1); }
+        
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+        .status-online { background-color: #22c55e; box-shadow: 0 0 8px #22c55e; }
+        .status-offline { background-color: #ef4444; }
+        
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+        
+        .video-js { width: 100% !important; height: 100% !important; }
+        #videoPlayer { width: 100% !important; height: 100% !important; object-fit: contain; }
+        #playerContainer:fullscreen { width: 100vw; height: 100vh; max-height: none; }
+
+        .pulse-blue { animation: pulse-blue 2s infinite; }
+        @keyframes pulse-blue {
+            0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(59, 130, 246, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+        }
+
+        .category-chip.active { background-color: #3b82f6; color: white; }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+    <!-- Top Navigation -->
+    <header class="h-16 glass border-b border-slate-700 flex items-center justify-between px-6 z-20">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20">
+                <i class="fas fa-tv text-white"></i>
+            </div>
+            <h1 class="text-xl font-bold tracking-tight">Kuis<span class="text-blue-500">IPTV</span> <span class="text-xs bg-blue-600 px-2 py-0.5 rounded-full ml-2 animate-pulse">v3.0 PRO</span></h1>
+        </div>
+        
+        <div id="nowPlayingHeader" class="hidden md:flex items-center gap-3 px-4 py-1.5 bg-slate-800/50 rounded-full border border-slate-700">
+            <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+            <span class="text-xs font-medium text-slate-300" id="nowPlayingText">Прямой эфир</span>
+        </div>
+        
+        <div class="flex items-center gap-2 md:gap-4">
+            <button id="headerInstallBtn" onclick="installPWA()" class="flex items-center gap-2 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-blue-500/30">
+                <i class="fas fa-download"></i>
+                <span class="hidden sm:inline">Установить</span>
+            </button>
+            <button onclick="toggleSettings()" class="p-2 hover:bg-slate-700 rounded-full transition-colors relative">
+                <i class="fas fa-cog text-slate-400"></i>
+                <span id="githubStatus" class="absolute top-0 right-0 w-3 h-3 bg-red-500 border-2 border-slate-900 rounded-full hidden"></span>
+            </button>
+            <button onclick="toggleSidebar()" class="lg:hidden p-2 hover:bg-slate-700 rounded-full">
+                <i class="fas fa-bars"></i>
+            </button>
+        </div>
+    </header>
+
+    <div class="flex flex-1 overflow-hidden relative">
+        
+        <!-- Sidebar -->
+        <aside id="sidebar" class="fixed lg:relative inset-y-0 left-0 w-72 glass border-r border-slate-700 z-30 transform -translate-x-full lg:translate-x-0 transition-transform duration-300 flex flex-col">
+            <div class="p-4 border-b border-slate-700 space-y-2">
+                <button onclick="openModal('addPlaylistModal')" class="w-full bg-blue-600 hover:bg-blue-500 py-2.5 rounded-lg font-medium flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-600/20">
+                    <i class="fas fa-plus-circle"></i> Плейлист
+                </button>
+                <button onclick="openModal('addChannelModal')" class="w-full bg-slate-700 hover:bg-slate-600 py-2.5 rounded-lg font-medium flex items-center justify-center gap-2 transition-all">
+                    <i class="fas fa-plus"></i> Канал
+                </button>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-4 space-y-6">
+                <!-- Favorites Section -->
+                <div>
+                    <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 px-2">Избранное</h3>
+                    <div id="favoritesList" class="space-y-1">
+                        <p class="text-sm text-slate-500 px-2 italic">Нет избранного</p>
+                    </div>
+                </div>
+
+                <!-- Playlists Section -->
+                <div>
+                    <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 px-2">Плейлисты</h3>
+                    <div id="playlistsContainer" class="space-y-1"></div>
+                </div>
+            </div>
+
+            <div class="p-4 border-t border-slate-700 bg-slate-900/50">
+                <div class="flex items-center gap-3">
+                    <div id="storageIndicator" class="w-2 h-2 rounded-full bg-orange-500"></div>
+                    <span class="text-xs text-slate-400" id="storageLabel">Локально</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 flex flex-col min-w-0 bg-slate-950 overflow-hidden">
+            
+            <!-- Player Area -->
+            <div id="playerContainer" class="relative w-full h-[30vh] lg:h-[400px] bg-black overflow-hidden group flex-shrink-0">
+                <div id="videoContainer" class="w-full h-full flex items-center justify-center">
+                    <video id="videoPlayer" class="w-full h-full video-js vjs-big-play-centered" controls playsinline></video>
+                </div>
+
+                <!-- TV Switch Overlay -->
+                <div id="tvOverlay" class="absolute inset-x-0 bottom-16 flex justify-center z-50">
+                    <div class="glass bg-black/60 px-8 py-4 rounded-2xl border-l-4 border-l-blue-500 flex items-center gap-6 shadow-2xl">
+                        <img id="overlayLogo" src="" class="w-16 h-16 object-contain bg-slate-800 rounded-lg">
+                        <div>
+                            <p id="overlayCategory" class="text-blue-400 text-xs font-black uppercase tracking-widest mb-1"></p>
+                            <h2 id="overlayName" class="text-2xl font-bold text-white leading-tight"></h2>
+                            <div class="flex items-center gap-3 mt-1">
+                                <span class="text-[10px] bg-blue-600 px-2 py-0.5 rounded text-white font-bold">LIVE</span>
+                                <span id="overlayTime" class="text-slate-400 text-xs font-mono"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="playerOverlay" class="absolute inset-0 flex items-center justify-center bg-slate-900/80 pointer-events-none transition-opacity duration-300 z-10">
+                    <div class="text-center">
+                        <i class="fas fa-play-circle text-6xl text-blue-500/50 mb-4"></i>
+                        <p class="text-slate-400">Выберите канал</p>
+                    </div>
+                </div>
+                
+                <!-- TV Controls -->
+                <div id="tvControls" class="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/90 to-transparent translate-y-full group-hover:translate-y-0 transition-transform flex items-center justify-between z-20">
+                    <div class="flex items-center gap-4">
+                        <button onclick="prevChannel()" class="w-10 h-10 rounded-full bg-white/10 hover:bg-blue-600 flex items-center justify-center"><i class="fas fa-step-backward"></i></button>
+                        <button onclick="togglePlay()" class="w-12 h-12 rounded-full bg-blue-600 hover:bg-blue-500 flex items-center justify-center shadow-lg"><i id="playIcon" class="fas fa-play ml-1"></i></button>
+                        <button onclick="nextChannel()" class="w-10 h-10 rounded-full bg-white/10 hover:bg-blue-600 flex items-center justify-center"><i class="fas fa-step-forward"></i></button>
+                    </div>
+                    <button onclick="toggleFullscreen()" class="p-2 text-slate-300 hover:text-white"><i class="fas fa-expand"></i></button>
+                </div>
+            </div>
+
+            <!-- Mini EPG Progress -->
+            <div id="miniEPG"><div id="epgProgress"></div></div>
+
+            <!-- Channels Filter & Grid -->
+            <div id="scrollArea" class="flex-1 flex flex-col p-4 md:p-6 overflow-hidden">
+                <div class="flex flex-col gap-4 mb-4">
+                    <div class="flex items-center justify-between gap-4">
+                        <div class="min-w-0">
+                            <h2 id="currentPlaylistTitle" class="text-xl font-bold truncate">Загрузите плейлист</h2>
+                            <div class="flex items-center gap-2">
+                                <p id="channelStats" class="text-slate-500 text-xs">0 каналов онлайн</p>
+                                <span class="text-slate-700">•</span>
+                                <button onclick="toggleViewMode()" class="text-blue-500 text-[10px] font-bold uppercase hover:underline">
+                                    <i class="fas fa-th-large mr-1"></i> <span id="viewLabel">Список</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="relative w-48 md:w-64">
+                            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"></i>
+                            <input type="text" id="channelSearch" placeholder="Поиск..." class="w-full bg-slate-800 border-none rounded-lg pl-9 pr-4 py-2 outline-none text-sm">
+                        </div>
+                    </div>
+
+                    <!-- Categories -->
+                    <div id="categoriesContainer" class="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                        <!-- Categories chips here -->
+                    </div>
+                </div>
+
+                <!-- Channels Grid -->
+                <div id="channelsGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 overflow-y-auto pr-2 flex-1">
+                    <!-- Channels here -->
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- PWA Install Red Banner (Fixed) -->
+    <div id="floatingInstall" class="fixed bottom-0 left-0 right-0 bg-red-600 text-white p-3 flex items-center justify-center gap-4 z-[9999] hidden">
+        <i class="fas fa-download"></i>
+        <span class="font-bold text-sm">Установить KuisIPTV на ТВ / Телефон</span>
+        <button onclick="installPWA()" class="bg-white text-red-600 px-4 py-1 rounded font-bold text-xs">УСТАНОВИТЬ</button>
+    </div>
+
+    <!-- Modals -->
+    <div id="addPlaylistModal" class="fixed inset-0 bg-black/80 z-[100] hidden items-center justify-center p-4">
+        <div class="bg-slate-800 rounded-xl w-full max-w-md p-6">
+            <h3 class="text-xl font-bold mb-4">Добавить плейлист</h3>
+            <input type="text" id="playlistName" placeholder="Название" class="w-full bg-slate-900 rounded p-3 mb-3 outline-none">
+            <input type="url" id="playlistUrl" placeholder="URL (M3U)" class="w-full bg-slate-900 rounded p-3 mb-4 outline-none">
+            <div class="flex gap-3">
+                <button onclick="handleAddPlaylist()" class="flex-1 bg-blue-600 py-3 rounded font-bold">Добавить</button>
+                <button onclick="closeModal('addPlaylistModal')" class="bg-slate-700 px-4 rounded">Отмена</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="addChannelModal" class="fixed inset-0 bg-black/80 z-[100] hidden items-center justify-center p-4">
+        <div class="bg-slate-800 rounded-xl w-full max-w-md p-6">
+            <h3 class="text-xl font-bold mb-4">Добавить свой канал</h3>
+            <input type="text" id="manualChannelName" placeholder="Название" class="w-full bg-slate-900 rounded p-3 mb-3 outline-none">
+            <input type="url" id="manualChannelUrl" placeholder="HLS URL (.m3u8)" class="w-full bg-slate-900 rounded p-3 mb-4 outline-none">
+            <div class="flex gap-3">
+                <button onclick="handleAddManualChannel()" class="flex-1 bg-blue-600 py-3 rounded font-bold">Сохранить</button>
+                <button onclick="closeModal('addChannelModal')" class="bg-slate-700 px-4 rounded">Отмена</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="settingsModal" class="fixed inset-0 bg-black/80 z-[100] hidden items-center justify-center p-4">
+        <div class="bg-slate-800 rounded-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-bold">Настройки</h3>
+                <button onclick="closeModal('settingsModal')"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="space-y-4">
+                <div class="bg-blue-600/10 p-3 rounded border border-blue-500/30">
+                    <p class="text-xs text-blue-400 font-bold mb-2">GitHub Синхронизация</p>
+                    <input type="password" id="ghToken" placeholder="ghp_..." class="w-full bg-slate-900 p-2 rounded text-sm mb-2 outline-none">
+                    <div class="grid grid-cols-2 gap-2">
+                        <input type="text" id="ghOwner" placeholder="Owner" class="bg-slate-900 p-2 rounded text-sm outline-none">
+                        <input type="text" id="ghRepo" placeholder="Repo" class="bg-slate-900 p-2 rounded text-sm outline-none">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Движок плеера</label>
+                    <select id="playerEngine" class="w-full bg-slate-900 p-3 rounded outline-none">
+                        <option value="hlsjs">Hls.js (Стандарт)</option>
+                        <option value="videojs">Video.js (Smart TV)</option>
+                        <option value="native">Native (Android/iOS)</option>
+                    </select>
+                </div>
+
+                <div class="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg">
+                    <span class="text-sm">Показывать каналы 18+</span>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="adultToggle" class="sr-only peer">
+                        <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                </div>
+
+                <div class="border-t border-slate-700 pt-4">
+                    <p class="text-xs text-slate-500 font-bold mb-3 uppercase">Управление категориями</p>
+                    <div id="categoryManager" class="space-y-2 max-h-48 overflow-y-auto pr-2">
+                        <!-- Categories to hide -->
+                    </div>
+                </div>
+
+                <button onclick="saveGitHubConfig()" class="w-full bg-blue-600 py-3 rounded font-bold">Сохранить всё</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let state = {
+            playlists: [],
+            favorites: [],
+            customChannels: [],
+            hiddenCategories: [],
+            viewMode: 'grid', // or 'list'
+            channels: [],
+            categories: ['Все'],
+            activeCategory: 'Все',
+            currentPlaylistIndex: -1,
+            currentChannelIndex: -1,
+            playerEngine: localStorage.getItem('playerEngine') || 'hlsjs',
+            showAdult: false,
+            github: {
+                token: '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',
+                owner: 'vadimkuis',
+                repo: 'KuisIPTV-Sync',
+                path: 'kuisiptv_data.json',
+                sha: ''
+            }
+        };
+
+        const video = document.getElementById('videoPlayer');
+        const hls = new Hls();
+        let vjsPlayer = null;
+        let deferredPrompt;
+
+        // Initialize
+        window.onload = async () => {
+            loadLocalData();
+            document.getElementById('playerEngine').value = state.playerEngine;
+            
+            // Populate settings
+            document.getElementById('ghToken').value = state.github.token;
+            document.getElementById('ghOwner').value = state.github.owner;
+            document.getElementById('ghRepo').value = state.github.repo;
+            document.getElementById('adultToggle').checked = state.showAdult;
+            
+            updateGitHubStatus();
+            await syncFromGitHub();
+            renderPlaylists();
+            renderFavorites();
+            
+            // PWA logic
+            window.addEventListener('beforeinstallprompt', (e) => {
+                e.preventDefault();
+                deferredPrompt = e;
+                document.getElementById('floatingInstall').classList.remove('hidden');
+            });
+        };
+
+        // UI Helpers
+        function toggleSidebar() { document.getElementById('sidebar').classList.toggle('-translate-x-full'); }
+        function openModal(id) { document.getElementById(id).classList.replace('hidden', 'flex'); }
+        function closeModal(id) { document.getElementById(id).classList.replace('flex', 'hidden'); }
+        function toggleSettings() { openModal('settingsModal'); }
+
+        // M3U Parsing
+        function parseM3U(content) {
+            const lines = content.split('\n');
+            const channels = [];
+            const cats = new Set(['Все']);
+            let currentChannel = null;
+
+            for (let line of lines) {
+                line = line.trim();
+                if (line.startsWith('#EXTINF:')) {
+                    const name = line.split(',').pop();
+                    const logoMatch = line.match(/tvg-logo="([^"]+)"/);
+                    const groupMatch = line.match(/group-title="([^"]+)"/);
+                    const group = groupMatch ? groupMatch[1] : 'Другие';
+                    cats.add(group);
+                    currentChannel = { name, logo: logoMatch ? logoMatch[1] : null, category: group, url: '', status: 'checking' };
+                } else if (line.startsWith('http')) {
+                    if (currentChannel) {
+                        currentChannel.url = line;
+                        channels.push(currentChannel);
+                        currentChannel = null;
+                    }
+                }
+            }
+            state.categories = Array.from(cats);
+            return channels;
+        }
+
+        async function loadPlaylist(index) {
+            state.currentPlaylistIndex = index;
+            state.activeCategory = 'Все'; // Сбрасываем категорию при смене плейлиста
+            
+            let playlist = index === 'custom' ? { name: 'Мои каналы', url: 'Локально' } : state.playlists[index];
+            
+            document.getElementById('currentPlaylistTitle').innerText = playlist.name;
+            document.getElementById('channelsGrid').innerHTML = '<div class="col-span-full py-10 text-center animate-pulse">Загрузка...</div>';
+            
+            try {
+                let channels = [];
+                if (index === 'custom') {
+                    channels = [...state.customChannels]; // Копируем массив
+                    state.categories = ['Все'];
+                } else {
+                    const res = await fetch(playlist.url);
+                    const data = await res.text();
+                    channels = parseM3U(data);
+                }
+                
+                state.channels = channels;
+                renderCategories();
+                renderChannels();
+                if (index !== 'custom') validateChannels();
+            } catch (e) {
+                console.error(e);
+                alert('Ошибка загрузки плейлиста');
+            }
+        }
+
+        async function validateChannels() {
+            const batchSize = 10;
+            let online = 0;
+            for (let i = 0; i < Math.min(state.channels.length, 100); i += batchSize) {
+                const batch = state.channels.slice(i, i + batchSize);
+                await Promise.all(batch.map(async (ch) => {
+                    try {
+                        const controller = new AbortController();
+                        setTimeout(() => controller.abort(), 3000);
+                        await fetch(ch.url, { method: 'HEAD', mode: 'no-cors', signal: controller.signal });
+                        ch.status = 'online';
+                        online++;
+                    } catch {
+                        ch.status = 'offline';
+                    }
+                }));
+                renderChannels();
+                document.getElementById('channelStats').innerText = `${online} каналов онлайн`;
+            }
+        }
+
+        function renderCategories() {
+            const container = document.getElementById('categoriesContainer');
+            container.innerHTML = '';
+            
+            // Filter out hidden categories unless it's the active one
+            const visibleCats = state.categories.filter(cat => cat === 'Все' || !state.hiddenCategories.includes(cat));
+            
+            visibleCats.forEach(cat => {
+                const btn = document.createElement('button');
+                btn.className = `category-chip px-4 py-1.5 rounded-full text-xs font-bold whitespace-nowrap bg-slate-800 hover:bg-slate-700 transition-colors ${state.activeCategory === cat ? 'active' : ''}`;
+                btn.innerText = cat;
+                btn.onclick = () => {
+                    state.activeCategory = cat;
+                    renderCategories();
+                    renderChannels();
+                };
+                container.appendChild(btn);
+            });
+            updateCategoryManager();
+        }
+
+        function renderChannels() {
+            const grid = document.getElementById('channelsGrid');
+            const search = document.getElementById('channelSearch').value.toLowerCase();
+            grid.innerHTML = '';
+            
+            const isCustom = state.currentPlaylistIndex === 'custom';
+            const adultKeywords = ['18+', 'adult', 'xxx', 'эротика', 'porn', 'эро'];
+            
+            const filtered = state.channels.filter(ch => {
+                // Фильтр логотипов (только для внешних плейлистов)
+                if (!isCustom && !ch.logo) return false;
+                
+                // Фильтр 18+
+                const isAdult = adultKeywords.some(k => 
+                    (ch.name || '').toLowerCase().includes(k) || 
+                    (ch.category || '').toLowerCase().includes(k)
+                );
+                if (isAdult && !state.showAdult) return false;
+
+                const matchesSearch = (ch.name || '').toLowerCase().includes(search);
+                const matchesCat = state.activeCategory === 'Все' || ch.category === state.activeCategory;
+                const notHidden = isCustom || !state.hiddenCategories.includes(ch.category);
+                
+                // В своих каналах показываем всё, во внешних - только онлайн
+                const statusOk = isCustom || ch.status !== 'offline';
+                
+                return matchesSearch && matchesCat && notHidden && statusOk;
+            });
+
+            if (filtered.length === 0) {
+                grid.innerHTML = `<div class="col-span-full py-20 text-center opacity-50">
+                    <i class="fas ${isCustom ? 'fa-plus-circle' : 'fa-search'} text-4xl mb-4 block"></i>
+                    <p>${isCustom ? 'В этом списке пока нет каналов.<br>Добавьте их кнопкой "+" на карточках каналов.' : 'Ничего не найдено'}</p>
+                </div>`;
+                return;
+            }
+
+            filtered.forEach((ch, idx) => {
+                const card = document.createElement('div');
+                card.tabIndex = 0;
+                card.className = `channel-card glass p-2 rounded-xl cursor-pointer flex flex-col gap-2 items-center text-center relative ${state.currentChannelIndex === idx ? 'active-channel' : ''}`;
+                
+                // Генерируем красивую заглушку, если нет логотипа
+                const logo = ch.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(ch.name)}&background=1e293b&color=3b82f6&size=128&bold=true`;
+                
+                card.onclick = () => playChannel(ch, idx);
+                card.innerHTML = `
+                    <div class="w-full aspect-video rounded-lg bg-slate-900 overflow-hidden flex items-center justify-center relative">
+                        <img src="${logo}" class="w-full h-full object-contain p-2" onerror="this.src='https://placehold.co/100x100/1e293b/3b82f6?text=TV'">
+                        <div class="absolute bottom-1 right-1">
+                            <span class="status-dot ${ch.status === 'online' ? 'status-online' : 'status-offline'}"></span>
+                        </div>
+                    </div>
+                    <div class="w-full text-left px-1">
+                        <p class="text-[9px] text-blue-400 uppercase font-black truncate">${ch.category}</p>
+                        <h4 class="text-[11px] font-bold truncate w-full leading-tight text-slate-200">${ch.name}</h4>
+                    </div>
+                    <div class="absolute top-1 right-1 flex gap-1">
+                        ${state.currentPlaylistIndex === 'custom' ? `
+                            <button onclick="deleteCustomChannel(event, '${ch.url}')" class="w-7 h-7 bg-red-600/80 backdrop-blur-md rounded-full flex items-center justify-center text-xs transition-transform active:scale-125 text-white">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        ` : `
+                            <button onclick="saveToCustom(event, ${JSON.stringify(ch).replace(/"/g, '&quot;')})" class="w-7 h-7 bg-black/60 backdrop-blur-md rounded-full flex items-center justify-center text-xs transition-transform active:scale-125 text-blue-400" title="Добавить в мои каналы">
+                                <i class="fas fa-plus"></i>
+                            </button>
+                        `}
+                        <button onclick="toggleFavorite(event, ${JSON.stringify(ch).replace(/"/g, '&quot;')})" class="w-7 h-7 bg-black/60 backdrop-blur-md rounded-full flex items-center justify-center text-xs transition-transform active:scale-125">
+                            <i class="${state.favorites.some(f=>f.url===ch.url) ? 'fas text-red-500' : 'far'} fa-heart"></i>
+                        </button>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        let overlayTimeout;
+        function playChannel(ch, index) {
+            state.currentChannelIndex = index;
+            document.getElementById('playerOverlay').style.opacity = 0;
+            document.getElementById('nowPlayingHeader').classList.remove('hidden');
+            document.getElementById('nowPlayingText').innerText = ch.name;
+
+            // Show TV Overlay
+            const ov = document.getElementById('tvOverlay');
+            const logo = ch.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(ch.name)}&background=1e293b&color=3b82f6`;
+            document.getElementById('overlayLogo').src = logo;
+            document.getElementById('overlayName').innerText = ch.name;
+            document.getElementById('overlayCategory').innerText = ch.category;
+            document.getElementById('overlayTime').innerText = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            
+            ov.classList.add('active');
+            clearTimeout(overlayTimeout);
+            overlayTimeout = setTimeout(() => ov.classList.remove('active'), 4000);
+
+            // Update EPG Progress (Mock)
+            document.getElementById('epgProgress').style.width = Math.floor(Math.random() * 80 + 10) + '%';
+
+            saveData();
+
+            if (vjsPlayer) { vjsPlayer.dispose(); vjsPlayer = null; document.getElementById('videoContainer').innerHTML = '<video id="videoPlayer" class="w-full h-full video-js vjs-big-play-centered" controls playsinline></video>'; }
+            hls.detachMedia();
+
+            const videoEl = document.getElementById('videoPlayer');
+            if (state.playerEngine === 'videojs') {
+                vjsPlayer = videojs('videoPlayer', { autoplay: true, controls: true, fill: true, sources: [{ src: ch.url, type: 'application/x-mpegURL' }] });
+            } else if (state.playerEngine === 'hlsjs' && Hls.isSupported()) {
+                hls.loadSource(ch.url); hls.attachMedia(videoEl); hls.on(Hls.Events.MANIFEST_PARSED, () => videoEl.play());
+            } else {
+                videoEl.src = ch.url; videoEl.play();
+            }
+        }
+
+        function toggleViewMode() {
+            state.viewMode = state.viewMode === 'grid' ? 'list' : 'grid';
+            document.getElementById('scrollArea').className = state.viewMode === 'list' ? 'flex-1 flex flex-col p-4 md:p-6 overflow-hidden view-list' : 'flex-1 flex flex-col p-4 md:p-6 overflow-hidden';
+            document.getElementById('viewLabel').innerText = state.viewMode === 'list' ? 'Сетка' : 'Список';
+            saveData();
+            renderChannels();
+        }
+
+        // Sticky Player logic
+        document.getElementById('channelsGrid').onscroll = (e) => {
+            const container = document.getElementById('playerContainer');
+            if (e.target.scrollTop > 200) {
+                container.classList.add('sticky-player');
+            } else {
+                container.classList.remove('sticky-player');
+            }
+        };
+
+        function updateCategoryManager() {
+            const container = document.getElementById('categoryManager');
+            container.innerHTML = '';
+            state.categories.forEach(cat => {
+                if (cat === 'Все') return;
+                const div = document.createElement('div');
+                div.className = "flex items-center justify-between bg-slate-900 p-2 rounded";
+                const isHidden = state.hiddenCategories.includes(cat);
+                div.innerHTML = `
+                    <span class="text-xs ${isHidden ? 'text-slate-600' : 'text-slate-200'}">${cat}</span>
+                    <button onclick="toggleCategoryVisibility('${cat}')" class="text-xs ${isHidden ? 'text-red-500' : 'text-green-500'}">
+                        <i class="fas fa-eye${isHidden ? '-slash' : ''}"></i>
+                    </button>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function toggleCategoryVisibility(cat) {
+            const idx = state.hiddenCategories.indexOf(cat);
+            if (idx > -1) state.hiddenCategories.splice(idx, 1);
+            else state.hiddenCategories.push(cat);
+            updateCategoryManager();
+            renderCategories();
+            renderChannels();
+            saveData();
+        }
+
+        function toggleFavorite(e, ch) {
+            e.stopPropagation();
+            const idx = state.favorites.findIndex(f => f.url === ch.url);
+            if (idx > -1) state.favorites.splice(idx, 1);
+            else state.favorites.push(ch);
+            saveData(); renderFavorites(); renderChannels();
+        }
+
+        function saveToCustom(e, ch) {
+            e.stopPropagation();
+            if (!state.customChannels.some(c => c.url === ch.url)) {
+                // Создаем чистую копию объекта канала
+                const newChannel = {
+                    name: ch.name,
+                    url: ch.url,
+                    logo: ch.logo || '',
+                    category: 'Сохраненные',
+                    status: 'online'
+                };
+                
+                state.customChannels.push(newChannel);
+                saveData();
+                renderPlaylists();
+                
+                // Если мы уже в разделе Мои каналы, обновляем список сразу
+                if (state.currentPlaylistIndex === 'custom') {
+                    state.channels = [...state.customChannels];
+                    renderChannels();
+                }
+
+                const toast = document.createElement('div');
+                toast.className = "fixed bottom-10 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-6 py-2 rounded-full shadow-2xl z-[1000]";
+                toast.innerText = "Добавлено в Мои каналы";
+                document.body.appendChild(toast);
+                setTimeout(() => toast.remove(), 2000);
+            }
+        }
+
+        function deleteCustomChannel(e, url) {
+            e.stopPropagation();
+            state.customChannels = state.customChannels.filter(c => c.url !== url);
+            saveData();
+            if (state.currentPlaylistIndex === 'custom') loadPlaylist('custom');
+            renderPlaylists();
+        }
+
+        function deletePlaylist(e, index) {
+            e.stopPropagation();
+            if (confirm('Удалить этот плейлист?')) {
+                state.playlists.splice(index, 1);
+                saveData();
+                renderPlaylists();
+            }
+        }
+
+        function renderFavorites() {
+            const list = document.getElementById('favoritesList');
+            list.innerHTML = state.favorites.length ? '' : '<p class="text-sm text-slate-500 px-2 italic">Нет избранного</p>';
+            state.favorites.forEach(ch => {
+                const item = document.createElement('div');
+                item.className = "p-2 hover:bg-slate-800 rounded-lg cursor-pointer flex items-center gap-2";
+                item.onclick = () => playChannel(ch, -1);
+                item.innerHTML = `<i class="fas fa-heart text-[10px] text-red-500"></i> <span class="text-xs truncate">${ch.name}</span>`;
+                list.appendChild(item);
+            });
+        }
+
+        function renderPlaylists() {
+            const list = document.getElementById('playlistsContainer');
+            list.innerHTML = '';
+            
+            const cItem = document.createElement('div');
+            cItem.className = `p-2 rounded-lg cursor-pointer flex items-center gap-2 ${state.currentPlaylistIndex === 'custom' ? 'bg-blue-600/20' : 'hover:bg-slate-800'}`;
+            cItem.onclick = () => loadPlaylist('custom');
+            cItem.innerHTML = `<i class="fas fa-user-tag text-xs"></i> <span class="text-sm">Мои каналы (${state.customChannels.length})</span>`;
+            list.appendChild(cItem);
+
+            state.playlists.forEach((p, i) => {
+                const item = document.createElement('div');
+                item.className = `p-2 rounded-lg cursor-pointer flex items-center justify-between group ${state.currentPlaylistIndex === i ? 'bg-blue-600/20' : 'hover:bg-slate-800'}`;
+                item.onclick = () => loadPlaylist(i);
+                item.innerHTML = `
+                    <div class="flex items-center gap-2 truncate">
+                        <i class="fas fa-list-ul text-xs"></i>
+                        <span class="text-sm truncate">${p.name}</span>
+                    </div>
+                    <button onclick="deletePlaylist(event, ${i})" class="opacity-0 group-hover:opacity-100"><i class="fas fa-trash text-[10px]"></i></button>
+                `;
+                list.appendChild(item);
+            });
+        }
+
+        async function handleAddPlaylist() {
+            const name = document.getElementById('playlistName').value;
+            const url = document.getElementById('playlistUrl').value;
+            if (!name || !url) return;
+            state.playlists.push({ name, url });
+            saveData(); renderPlaylists(); closeModal('addPlaylistModal');
+        }
+
+        async function handleAddManualChannel() {
+            const name = document.getElementById('manualChannelName').value;
+            const url = document.getElementById('manualChannelUrl').value;
+            if (!name || !url) return;
+            state.customChannels.push({ name, url, category: 'Личное', status: 'online' });
+            saveData(); renderPlaylists(); closeModal('addChannelModal');
+        }
+
+        function saveGitHubConfig() {
+            state.github.token = document.getElementById('ghToken').value;
+            state.github.owner = document.getElementById('ghOwner').value;
+            state.github.repo = document.getElementById('ghRepo').value;
+            state.playerEngine = document.getElementById('playerEngine').value;
+            state.showAdult = document.getElementById('adultToggle').checked;
+            localStorage.setItem('playerEngine', state.playerEngine);
+            saveData();
+            updateGitHubStatus();
+            syncFromGitHub();
+            renderChannels();
+            closeModal('settingsModal');
+        }
+
+        function loadLocalData() {
+            const saved = localStorage.getItem('iptv_state_v3');
+            if (saved) {
+                const p = JSON.parse(saved);
+                state.playlists = p.playlists || [];
+                state.favorites = p.favorites || [];
+                state.customChannels = p.customChannels || [];
+                state.hiddenCategories = p.hiddenCategories || [];
+                state.viewMode = p.viewMode || 'grid';
+                state.showAdult = p.showAdult || false;
+            }
+        }
+
+        function saveData() {
+            localStorage.setItem('iptv_state_v3', JSON.stringify({
+                playlists: state.playlists, favorites: state.favorites,
+                customChannels: state.customChannels, hiddenCategories: state.hiddenCategories,
+                viewMode: state.viewMode, showAdult: state.showAdult
+            }));
+            updateGitHubRepo();
+        }
+
+        async function updateGitHubRepo() {
+            if (!state.github.token) return;
+            try {
+                const url = `https://api.github.com/repos/${state.github.owner}/${state.github.repo}/contents/${state.github.path}`;
+                const getRes = await fetch(url, { headers: { 'Authorization': `token ${state.github.token}` } });
+                if (getRes.ok) { const d = await getRes.json(); state.github.sha = d.sha; }
+                const content = btoa(unescape(encodeURIComponent(JSON.stringify({
+                    playlists: state.playlists, favorites: state.favorites,
+                    customChannels: state.customChannels
+                }))));
+                await fetch(url, {
+                    method: 'PUT',
+                    headers: { 'Authorization': `token ${state.github.token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: 'Update', content, sha: state.github.sha || undefined })
+                });
+            } catch (e) {}
+        }
+
+        async function syncFromGitHub() {
+            if (!state.github.token) return;
+            try {
+                const url = `https://api.github.com/repos/${state.github.owner}/${state.github.repo}/contents/${state.github.path}`;
+                const res = await fetch(url, { headers: { 'Authorization': `token ${state.github.token}` } });
+                if (res.ok) {
+                    const d = await res.json();
+                    const c = JSON.parse(decodeURIComponent(escape(atob(d.content))));
+                    state.playlists = c.playlists || [];
+                    state.favorites = c.favorites || [];
+                    state.customChannels = c.customChannels || [];
+                    renderFavorites(); renderPlaylists();
+                    
+                    // Если открыт раздел Мои каналы, обновляем сетку
+                    if (state.currentPlaylistIndex === 'custom') {
+                        state.channels = [...state.customChannels];
+                        renderChannels();
+                    }
+                }
+            } catch (e) {}
+        }
+
+        function updateGitHubStatus() {
+            const dot = document.getElementById('githubStatus');
+            const label = document.getElementById('storageLabel');
+            if (state.github.token && state.github.owner && state.github.repo) { 
+                dot.classList.remove('hidden'); 
+                dot.classList.replace('bg-red-500', 'bg-green-500');
+                label.innerText = 'Облако: ' + state.github.owner; 
+            }
+            else { 
+                dot.classList.remove('hidden'); 
+                dot.classList.replace('bg-green-500', 'bg-red-500');
+                label.innerText = 'Локально'; 
+            }
+        }
+
+        async function installPWA() {
+            if (!deferredPrompt) { alert('Откройте в Chrome и нажмите "Добавить на гл. экран" в меню'); return; }
+            deferredPrompt.prompt();
+            await deferredPrompt.userChoice;
+            deferredPrompt = null;
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (state.currentChannelIndex !== -1) {
+                if (e.key === 'ArrowUp') { prevChannel(); e.preventDefault(); }
+                if (e.key === 'ArrowDown') { nextChannel(); e.preventDefault(); }
+            }
+        });
+
+        function getFilteredChannels() {
+            const adultKeywords = ['18+', 'adult', 'xxx', 'эротика', 'porn', 'эро'];
+            return state.channels.filter(ch => {
+                // В "Моих каналах" логотип не обязателен
+                if (!ch.logo && state.currentPlaylistIndex !== 'custom') return false;
+                
+                const isAdult = adultKeywords.some(k => 
+                    ch.name.toLowerCase().includes(k) || 
+                    ch.category.toLowerCase().includes(k)
+                );
+                
+                if (isAdult && !state.showAdult) return false;
+                
+                const matchesCat = state.activeCategory === 'Все' || ch.category === state.activeCategory;
+                const notHidden = !state.hiddenCategories.includes(ch.category);
+                
+                // В моих каналах не скрываем оффлайн (даем шанс прогрузиться)
+                if (state.currentPlaylistIndex !== 'custom' && ch.status === 'offline') return false;
+                
+                return matchesCat && notHidden;
+            });
+        }
+
+        function nextChannel() {
+            const filtered = getFilteredChannels();
+            if (filtered.length) {
+                state.currentChannelIndex = (state.currentChannelIndex + 1) % filtered.length;
+                playChannel(filtered[state.currentChannelIndex], state.currentChannelIndex);
+            }
+        }
+
+        function prevChannel() {
+            const filtered = getFilteredChannels();
+            if (filtered.length) {
+                state.currentChannelIndex = (state.currentChannelIndex - 1 + filtered.length) % filtered.length;
+                playChannel(filtered[state.currentChannelIndex], state.currentChannelIndex);
+            }
+        }
+        
+        document.getElementById('channelSearch').oninput = () => renderChannels();
+
+    </script>
+</body>
+</html>
