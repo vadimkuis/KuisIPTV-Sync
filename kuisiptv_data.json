@@ -29,6 +29,12 @@
       "logo": "http://epg.one/img2/711.png",
       "url": "https://zabava-htlive.cdn.ngenix.net/hls/CH_RUSSIA1/variant.m3u8",
       "status": "online"
+    },
+    {
+      "name": "RU TV HD",
+      "logo": "https://iptvx.one/picons/ru-tv.png",
+      "url": "https://hls-03-video.webcaramba.com/rutv/live_1080/index.m3u8",
+      "status": "online"
     }
   ],
   "playerEngine": "hlsjs"
