@@ -19,6 +19,11 @@
       "name": "ТВОЕ ТВ - канал для всей семьи",
       "url": "https://m3u.su/tvoe",
       "id": 1766916440823
+    },
+    {
+      "name": "[loganet] movie",
+      "url": "https://m3u.su/lgo",
+      "id": 1766916498191
     }
   ],
   "favorites": [],
