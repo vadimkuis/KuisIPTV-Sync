@@ -29,6 +29,11 @@
       "name": "[iptv-org] Российские (ru_smotrim)",
       "url": "https://m3u.su/rusm",
       "id": 1766916534309
+    },
+    {
+      "name": "Советские мультики",
+      "url": "https://m3u.su/mult",
+      "id": 1766916563267
     }
   ],
   "favorites": [],
